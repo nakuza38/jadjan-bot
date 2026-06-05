@@ -1,0 +1,16 @@
+{
+  "name": "line-sheet-bot",
+  "version": "1.0.0",
+  "description": "LINE group webhook bot that reads data from Google Sheet and replies to LINE group",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.9",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "googleapis": "^144.0.0"
+  }
+}
