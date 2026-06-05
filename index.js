@@ -125,9 +125,24 @@ app.post("/webhook", async (req, res) => {
         continue;
       }
 
-      const contestant = await findContestant(text);
-      const message = buildContestantMessage(contestant, text);
-      await replyLine(replyToken, message);
+// รับเฉพาะ JJ401 - JJ480
+const searchCode = text.toUpperCase();
+
+const match = searchCode.match(/^JJ(\d{3})$/);
+
+if (!match) {
+  continue;
+}
+
+const number = parseInt(match[1], 10);
+
+if (number < 401 || number > 480) {
+  continue;
+}
+
+const contestant = await findContestant(searchCode);
+const message = buildContestantMessage(contestant, searchCode);
+await replyLine(replyToken, message);
     }
   } catch (err) {
     console.error("❌ webhook error:", err.response?.data || err.message);
