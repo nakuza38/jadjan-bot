@@ -63,7 +63,6 @@ function buildContestantMessage(row, keyword) {
     `รหัส: ${id}`,
     `หมายเลข: ${no}`,
     `ชื่อ: ${name}`,
-    `ชื่อเล่น: ${nickname}`,
     `Username: ${username}`,
     `สถานะ: ${status}`
   ].join("\n");
