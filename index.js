@@ -60,8 +60,7 @@ function buildContestantMessage(row, keyword) {
 
   return [
     "🎤 ข้อมูลผู้สมัคร",
-    `รหัส: ${id}`,
-    `หมายเลข: ${no}`,
+    `รหัส: ${no}`,
     `ชื่อ: ${name}`,
     `Username: ${username}`,
     `สถานะ: ${status}`
