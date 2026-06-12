@@ -110,9 +110,7 @@ app.get("/", (req, res) => {
 });
 
 app.post("/line-webhook", async (req, res) => {
-
-
-
+  console.log("LINE WEBHOOK RECEIVED:", JSON.stringify(req.body));
   res.sendStatus(200);
 
   try {
