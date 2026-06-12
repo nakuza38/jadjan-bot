@@ -1,155 +1,213 @@
 require("dotenv").config();
 
 const express = require("express");
+const { WebcastPushConnection } = require("tiktok-live-connector");
 const axios = require("axios");
 
 const app = express();
-app.use(express.json({ limit: "10mb" }));
+app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
-const LINE_CHANNEL_ACCESS_TOKEN = process.env.LINE_CHANNEL_ACCESS_TOKEN;
-const APPS_SCRIPT_URL = process.env.APPS_SCRIPT_URL;
 
-const COL_ID = process.env.COL_ID || "ID";
-const COL_NO = process.env.COL_NO || "number";
-const COL_NAME = process.env.COL_NAME || "name";
-const COL_NICKNAME = process.env.COL_NICKNAME || "nickname";
-const COL_USERNAME = process.env.COL_USERNAME || "username";
-const COL_STATUS = process.env.COL_STATUS || "status";
+const tiktokUsername = process.env.TIKTOK_USERNAME;
+const webhookUrl = process.env.GAS_WEBHOOK_URL;
+const secret = process.env.SECRET;
+const liveId = process.env.LIVE_ID || "live";
 
-function checkEnv() {
-  const missing = [];
-  if (!LINE_CHANNEL_ACCESS_TOKEN) missing.push("LINE_CHANNEL_ACCESS_TOKEN");
-  if (!APPS_SCRIPT_URL) missing.push("APPS_SCRIPT_URL");
+const lineToken = process.env.LINE_CHANNEL_ACCESS_TOKEN;
+const lineGroupId = process.env.LINE_GROUP_ID;
 
-  if (missing.length > 0) {
-    console.log("❌ ยังขาดค่าใน .env:", missing.join(", "));
-    return false;
+const seenVotes = new Set();
+
+const validCandidates = (process.env.VALID_CANDIDATES || "")
+  .split(",")
+  .map(x => x.trim().toUpperCase())
+  .filter(Boolean);
+
+console.log("กำลังชม TikTok:", tiktokUsername);
+console.log("Google Sheet Webhook:", webhookUrl ? "มีแล้ว" : "ไม่มี");
+console.log("LINE Token:", lineToken ? "มีแล้ว" : "ไม่มี");
+console.log("LINE Group ID:", lineGroupId ? lineGroupId : "ไม่มี");
+console.log("Valid candidates:", validCandidates);
+
+const tiktokLiveConnection = new WebcastPushConnection(tiktokUsername, {
+  disableEulerFallbacks: true
+});
+
+function extractCandidate(comment) {
+  const text = String(comment || "").trim().toUpperCase();
+
+  console.log("คอมเม้นที่พิมพ์มา:", text);
+
+  const match = text.match(/^โหวต\s*JJ(\d{3})$/i);
+
+  if (!match) return null;
+
+  const candidateCode = `โหวตJJ${match[1]}`.toUpperCase();
+
+  if (validCandidates.length > 0 && !validCandidates.includes(candidateCode)) {
+    console.log("ไม่รับผู้เข้าแข่งขันหมายเลขนี้:", candidateCode);
+    return null;
   }
-  return true;
+
+  return candidateCode;
 }
 
-function normalizeText(text) {
-  return String(text || "").trim();
-}
+async function sendVoteToSheet(payload) {
+  console.log("ส่งไปอัพเดทที่ sheet:", payload);
 
-function toKey(text) {
-  return normalizeText(text).toLowerCase();
-}
-
-async function findContestant(keyword) {
-  const res = await axios.get(APPS_SCRIPT_URL, {
-    params: { q: keyword },
+  const res = await axios.post(webhookUrl, payload, {
+    headers: { "Content-Type": "application/json" },
     timeout: 10000
   });
 
-  return res.data.data || null;
-}
+  console.log("sheet response:", res.data);
 
-function buildContestantMessage(row, keyword) {
-  if (!row) {
-    return `ไม่พบข้อมูลจากคำว่า "${keyword}" นะคะ\n\nลองพิมพ์รหัส เช่น JJ401 หรือชื่อผู้สมัครอีกครั้งค่ะ`;
+  if (!res.data || res.data.ok !== true) {
+    throw new Error("Google Sheet save failed");
   }
 
-  const id = row[COL_ID] || "-";
-  const no = row[COL_NO] || "-";
-  const name = row[COL_NAME] || "-";
-  const nickname = row[COL_NICKNAME] || "-";
-  const username = row[COL_USERNAME] || "-";
-  const status = row[COL_STATUS] || "-";
-
-  return [
-    "🎤 ข้อมูลผู้สมัคร",
-    `รหัส: ${no}`,
-    `ชื่อ: ${name}`,
-    `Username: ${username}`,
-    `สถานะ: ${status}`
-  ].join("\n");
+  return res.data;
 }
 
-async function replyLine(replyToken, text) {
-  if (!replyToken) return;
-
+async function replyLineMessage(replyToken, message) {
   await axios.post(
     "https://api.line.me/v2/bot/message/reply",
     {
       replyToken,
-      messages: [
-        {
-          type: "text",
-          text: String(text).slice(0, 4900)
-        }
-      ]
+      messages: [{ type: "text", text: message }]
     },
     {
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`
+        Authorization: `Bearer ${lineToken}`
       },
       timeout: 10000
     }
   );
 }
 
-app.get("/", (req, res) => {
-  res.send("LINE Sheet Bot is running ✅");
-});
+async function getRandomWinners(count) {
+  const res = await axios.get(webhookUrl, {
+    params: {
+      action: "random",
+      count,
+      secret
+    },
+    timeout: 10000
+  });
 
-app.get("/health", (req, res) => {
-  res.json({ ok: true, service: "line-sheet-bot" });
-});
+  if (!res.data || res.data.ok !== true) {
+    throw new Error("Random winners failed");
+  }
 
-app.post("/webhook", async (req, res) => {
-  res.status(200).json({ ok: true });
+  return res.data.winners || [];
+}
+
+app.post("/line-webhook", async (req, res) => {
+  res.sendStatus(200);
 
   try {
-    if (!checkEnv()) return;
-
     const events = req.body.events || [];
 
     for (const event of events) {
       if (event.type !== "message") continue;
-      if (!event.message || event.message.type !== "text") continue;
+      if (event.message.type !== "text") continue;
 
-      const text = normalizeText(event.message.text);
-      const replyToken = event.replyToken;
+      const text = String(event.message.text || "").trim();
+      const match = text.match(/^สุ่ม(\d+)$/);
 
-      console.log("📩 ได้ข้อความ:", text);
+      if (!match) continue;
 
-      if (["help", "วิธีใช้", "ช่วยเหลือ"].includes(toKey(text))) {
-        await replyLine(
-          replyToken,
-          "วิธีใช้บอท\n\nพิมพ์รหัสผู้สมัคร เช่น JJ401\nหรือพิมพ์ชื่อ / ชื่อเล่น เพื่อค้นหาข้อมูลจาก Google Sheet"
-        );
+      const count = Number(match[1]);
+      const winners = await getRandomWinners(count);
+
+      if (winners.length === 0) {
+        await replyLineMessage(event.replyToken, "ยังไม่มีข้อมูลสำหรับสุ่ม");
         continue;
       }
 
-// รับเฉพาะ JJ401 - JJ480
-const searchCode = text.toUpperCase();
+      const message =
+        `🎉 ผู้โชคดี ${winners.length} ท่าน\n\n` +
+        winners.map((w, i) =>
+          `${i + 1}. ${w.nickname || "-"}\n` +
+          `TikTok: ${w.username || "-"}\n` +
+          `โหวตให้: ${w.candidateNo || "-"}`
+        ).join("\n\n");
 
-const match = searchCode.match(/^JJ(\d{3})$/);
-
-if (!match) {
-  continue;
-}
-
-const number = parseInt(match[1], 10);
-
-if (number < 401 || number > 480) {
-  continue;
-}
-
-const contestant = await findContestant(searchCode);
-const message = buildContestantMessage(contestant, searchCode);
-await replyLine(replyToken, message);
+      await replyLineMessage(event.replyToken, message);
     }
   } catch (err) {
-    console.error("❌ webhook error:", err.response?.data || err.message);
+    console.error("LINE webhook error:", err.message);
   }
 });
 
+tiktokLiveConnection
+  .connect()
+  .then(state => {
+    console.log(`Connected to TikTok Live roomId: ${state.roomId}`);
+    console.log("รอ comments...");
+  })
+  .catch(err => {
+    console.error("เชื่อมต่อ TikTok ไม่ได้:", err);
+  });
+
+tiktokLiveConnection.on("chat", async data => {
+  console.log("CHAT EVENT RECEIVED");
+  console.log({
+    username: data.uniqueId,
+    nickname: data.nickname,
+    comment: data.comment
+  });
+
+  try {
+    const comment = data.comment || "";
+    const candidateNo = extractCandidate(comment);
+
+    if (!candidateNo) {
+      console.log("ไม่พบเลขลงทะเบียนในคอมเม้น");
+      return;
+    }
+
+    const username = data.uniqueId || "";
+    const nickname = data.nickname || "";
+    const userId = data.userId || username;
+
+    const voteKey = `${liveId}:${userId}`;
+
+    if (seenVotes.has(voteKey)) {
+      console.log(`โหวตซ้ำ ignored: ${username}`);
+      return;
+    }
+
+    seenVotes.add(voteKey);
+
+    const payload = {
+      secret,
+      candidateNo,
+      nickname,
+      username,
+      comment,
+      liveId,
+      userId,
+      raw: {
+        createTime: data.createTime,
+        msgId: data.msgId
+      }
+    };
+
+    await sendVoteToSheet(payload);
+
+    console.log(`Vote saved: ${username} -> ${candidateNo}`);
+  } catch (err) {
+    console.error("Chat handler error:", err.message);
+  }
+});
+
+tiktokLiveConnection.on("disconnected", () => {
+  console.log("Disconnected from TikTok Live");
+});
+
 app.listen(PORT, () => {
-  console.log(`🚀 Server started on port ${PORT}`);
-  checkEnv();
-  console.log(`✅ Webhook path: /webhook`);
+  console.log(`LINE webhook server running on port ${PORT}`);
 });
