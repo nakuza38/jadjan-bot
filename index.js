@@ -104,7 +104,15 @@ async function getRandomWinners(count) {
   return res.data.winners || [];
 }
 
+
+app.get("/", (req, res) => {
+  res.send("Jadjan bot is running ✅");
+});
+
 app.post("/line-webhook", async (req, res) => {
+
+
+
   res.sendStatus(200);
 
   try {
