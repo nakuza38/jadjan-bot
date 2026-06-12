@@ -88,20 +88,29 @@ async function replyLineMessage(replyToken, message) {
 }
 
 async function getRandomWinners(count) {
-  const res = await axios.get(webhookUrl, {
-    params: {
-      action: "random",
-      count,
-      secret
-    },
-    timeout: 10000
-  });
+  try {
+    const res = await axios.get(webhookUrl, {
+      params: {
+        action: "random",
+        count,
+        secret
+      },
+      timeout: 10000
+    });
 
-  if (!res.data || res.data.ok !== true) {
-    throw new Error("Random winners failed");
+    console.log("APPS SCRIPT RESPONSE:");
+    console.log(JSON.stringify(res.data));
+
+    if (!res.data || res.data.ok !== true) {
+      throw new Error(JSON.stringify(res.data));
+    }
+
+    return res.data.winners || [];
+  } catch (err) {
+    console.error("APPS SCRIPT ERROR:");
+    console.error(err.response?.data || err.message);
+    throw err;
   }
-
-  return res.data.winners || [];
 }
 
 
